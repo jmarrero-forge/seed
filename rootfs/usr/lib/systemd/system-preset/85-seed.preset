@@ -1,0 +1,3 @@
+# Image mode systems update via bootc, not by refreshing dnf metadata;
+# https://github.com/coreos/fedora-coreos-tracker/issues/1896#issuecomment-2848251507
+disable dnf-makecache.timer

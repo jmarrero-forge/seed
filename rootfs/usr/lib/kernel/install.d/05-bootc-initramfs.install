@@ -1,0 +1,37 @@
+#!/usr/bin/bash
+# Generate the initramfs for bootc images when the kernel package is
+# installed or updated, including in derived container builds.
+#
+# bootc expects the kernel and initramfs in /usr/lib/modules/$kver, not /boot.
+# Historically rpm-ostree's 05-rpmostree.install handled layout=ostree, but the
+# seed doesn't ship rpm-ostree. Like `rpm-ostree kernel-install`, this doesn't
+# handle UKIs or initrds passed as arguments.
+# The proper home for this is bootc itself, which already ships the
+# layout=ostree configuration in /usr/share/doc/bootc/baseimage/systemd.
+set -euo pipefail
+
+COMMAND="$1"
+KERNEL_VERSION="$2"
+# Tells kernel-install to skip the remaining plugins
+# (50-dracut would write to /boot, 90-loaderentry would write BLS entries).
+SKIP_REMAINING=77
+
+if [[ "${KERNEL_INSTALL_LAYOUT:-}" != "ostree" ]]; then
+    exit 0
+fi
+
+moddir="/usr/lib/modules/${KERNEL_VERSION}"
+case "$COMMAND" in
+    add)
+        # Same order as kernel-install's own 50-depmod and 50-dracut plugins,
+        # so the initramfs is built from current module metadata.
+        depmod -a "$KERNEL_VERSION"
+        dracut --no-hostonly --reproducible --force --kver "$KERNEL_VERSION" "${moddir}/initramfs.img"
+        exit "$SKIP_REMAINING"
+        ;;
+    remove)
+        # Unowned by any package; leaving it behind would leave a stale
+        # /usr/lib/modules/$kver directory, failing bootc's "kernel" lint.
+        rm -f "${moddir}/initramfs.img"
+        ;;
+esac

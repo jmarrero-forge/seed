@@ -1,0 +1,26 @@
+# A derived build that updates the kernel must end up with exactly one kernel
+# and a regenerated initramfs in /usr/lib/modules; without rpm-ostree this is
+# 05-bootc-initramfs.install's job.
+ARG SEED=localhost/seed
+FROM ${SEED}
+RUN <<EORUN
+set -xeuo pipefail
+old=$(stat -c %Y /usr/lib/modules/*/initramfs.img)
+# Prefer a real version change, which also exercises installonlypkgs=. When
+# the seed already has the newest kernel, a reinstall still runs the
+# remove and add hooks. (dnf check-upgrade exits 100 if updates exist.)
+if dnf -q check-upgrade kernel-core; then
+    dnf -y reinstall kernel-core
+else
+    dnf -y upgrade kernel
+fi
+kdirs=(/usr/lib/modules/*)
+test "${#kdirs[@]}" -eq 1
+test "$(stat -c %Y "${kdirs[0]}/initramfs.img")" -gt "$old"
+modules=$(lsinitrd -m "${kdirs[0]}/initramfs.img")
+grep -qx ostree <<< "$modules"
+# Only the fatal lints (e.g. a second kernel). The warnings are not about the
+# kernel: dnf leaves state in /var and /run in any derived build, and
+# kernel-core's %posttrans copies symvers into /boot.
+bootc container lint
+EORUN

@@ -1,0 +1,23 @@
+# The seed package set, see https://forge.fedoraproject.org/atomic/tracker/issues/144
+#
+# Weak dependencies are not installed, so anything the seed relies on must be
+# listed here (or be a hard dependency of something listed here).
+#
+# Note that the rpm-ostree package is intentionally absent; tests/rootfs.sh
+# verifies it does not get pulled in.
+kernel
+systemd
+# Dropped to weak dependencies of systemd, but needed by logind and PAM
+# sessions; same as upstream minimal (minimal/bootc.yaml in base-images).
+systemd-pam
+dbus
+podman
+selinux-policy-targeted
+bootc
+# Fedora's presets enable kmsconvt@ instead of getty@ for the VT login
+# (https://fedoraproject.org/wiki/Changes/UseKmsconVTConsole); without it
+# there's no login on tty1. Same as upstream minimal.
+kmscon
+# Not in the list from the issue, but derived images are expected to
+# `RUN dnf install ...`, so the seed needs a package manager.
+dnf5
