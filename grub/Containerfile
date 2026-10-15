@@ -3,6 +3,8 @@
 # Build with `just grub`.
 ARG SEED=localhost/seed
 FROM ${SEED}
+# Installed in addition, e.g. to match another image's package set.
+ARG EXTRA_PACKAGES=""
 RUN --mount=type=cache,rw,id=seed-grub-dnf-cache,target=/var/cache/libdnf5 <<EORUN
 set -xeuo pipefail
 case "$(uname -m)" in
@@ -12,7 +14,7 @@ case "$(uname -m)" in
 esac
 # Without weak dependencies, like the seed itself.
 dnf -y --setopt=install_weak_deps=False install \
-    bootupd efibootmgr "${bootloader[@]}" xfsprogs e2fsprogs dosfstools
+    bootupd efibootmgr "${bootloader[@]}" xfsprogs e2fsprogs dosfstools ${EXTRA_PACKAGES}
 
 # Update the bootloader from the image on boot, like the base-images do
 # (https://fedoraproject.org/wiki/Changes/AutomaticBootloaderUpdatesBootc).

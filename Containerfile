@@ -15,19 +15,27 @@
 ARG BUILDER_IMAGE=quay.io/fedora/fedora:rawhide
 
 FROM ${BUILDER_IMAGE} AS builder
-RUN dnf -y install sqlite
+# Installed into the builder in addition to sqlite (which normalizes the
+# rpmdb below), e.g. more repo definitions.
+ARG BUILDER_PACKAGES=""
+RUN dnf -y install sqlite ${BUILDER_PACKAGES}
 COPY packages.txt /src/
 COPY rootfs/ /src/rootfs/
 # Don't leak the umask or setuid/setgid bits of the build context's checkout
 # into the image; same as fedora/bootc/base-images.
 RUN chmod -R a=rX,u+w /src
+# Installed into the seed in addition to packages.txt, e.g. a different
+# system-release.
+ARG EXTRA_PACKAGES=""
 RUN --mount=type=cache,rw,id=seed-dnf-cache,target=/target/var/cache/libdnf5 <<EORUN
 set -xeuo pipefail
 # --use-host-config takes the repos from the builder, but also its dnf and rpm
 # configuration, which is tuned for a small application container. Undo the
-# parts that would change the seed's content: the builder installs only
-# en_US translations and no docs (bootc's reference content is docs).
-rm /etc/rpm/macros.image-language-conf
+# parts that would change the seed's content: the fedora container image
+# installs only en_US translations, and builders generally skip docs (bootc's
+# reference content is docs, see --setopt=tsflags= below).
+rm -f /etc/rpm/macros.image-language-conf
+test "$(rpm --eval %_install_langs)" = all
 # Scriptlets detect image mode systems via /ostree (e.g. alternatives keeps
 # its state in /etc instead of /var); make them behave as in derived builds.
 mkdir -p /target
@@ -39,7 +47,7 @@ KERNEL_INSTALL_BYPASS=1 dnf -y --installroot=/target --use-host-config \
     --setopt=tsflags= --setopt=install_weak_deps=False \
     --setopt=best=True --setopt=skip_if_unavailable=False \
     --setopt=keepcache=True \
-    install $(grep -Ev '^\s*(#|$)' /src/packages.txt)
+    install $(grep -Ev '^\s*(#|$)' /src/packages.txt) ${EXTRA_PACKAGES}
 
 # Now fix up the state the transaction left behind. This stays in the same
 # layer as the install so that moves are plain renames.
