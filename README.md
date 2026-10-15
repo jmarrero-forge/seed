@@ -35,7 +35,8 @@ just test-grub    # bootc install it to a disk and boot it from there
 The build also runs `bootc container lint --fatal-warnings`.
 
 `BUILDER_IMAGE` (default `quay.io/fedora/fedora:rawhide`) selects the Fedora
-release: the repos and releasever are taken from it.
+release: the repos and releasever are taken from it. `PODMAN_BUILD_ARGS`
+passes extra arguments to all the podman builds, see the [Justfile](Justfile).
 
 ### The grub variant
 

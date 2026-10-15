@@ -3,6 +3,12 @@
 image := env("IMAGE", "localhost/seed")
 # Controls the package versions (repos and releasever) of the seed.
 builder_image := env("BUILDER_IMAGE", "quay.io/fedora/fedora:rawhide")
+# Extra arguments for all the `podman build`s. E.g. when the repos serve a
+# certificate only the host trusts, mount the host's CA bundle (label=disable
+# lets the build read it without relabeling it; it is read-only, so build
+# steps that update ca-certificates would fail):
+#   PODMAN_BUILD_ARGS="--security-opt=label=disable -v /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro"
+podman_build_args := env("PODMAN_BUILD_ARGS", "")
 # Generous upper bound for booting and running tests/booted.sh; a healthy
 # boot takes seconds, but bcvk hangs instead of failing when the command does.
 boot_timeout := "300"
@@ -16,18 +22,19 @@ grub_test_vm := file_name(image) + "-grub-test"
 
 # Build the seed image
 build:
-    podman build --security-opt=label=disable \
+    podman build --security-opt=label=disable {{podman_build_args}} \
         --build-arg=BUILDER_IMAGE={{builder_image}} -t {{image}} .
 
 # Build an installable variant of the seed, with bootupd, grub2 and shim
 grub:
-    podman build --build-arg=SEED={{image}} -t {{image}}-grub grub
+    podman build {{podman_build_args}} --build-arg=SEED={{image}} -t {{image}}-grub grub
 
 # Install the grub variant to a disk and boot it (UEFI with Secure Boot)
 test-grub:
     #!/usr/bin/bash
     set -euo pipefail
-    podman build -f tests/Containerfile.installed --build-arg=BASE={{image}}-grub \
+    podman build {{podman_build_args}} -f tests/Containerfile.installed \
+        --build-arg=BASE={{image}}-grub \
         -t {{image}}-grub-test tests
     trap 'bcvk libvirt rm --force {{grub_test_vm}}' EXIT
     # Like Fedora's images, the seed has no default root filesystem type.
@@ -44,7 +51,7 @@ test-rootfs:
 
 # Check that a derived build can update the kernel
 test-derive:
-    podman build -f tests/Containerfile.derive --build-arg=SEED={{image}} \
+    podman build {{podman_build_args}} -f tests/Containerfile.derive --build-arg=SEED={{image}} \
         -t {{image}}-derive-test tests
 
 # Boot the seed; no bootloader needed, as bcvk boots the kernel directly
