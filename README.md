@@ -12,6 +12,24 @@ This is a prototype of building it **without rpm-ostree**: no treefiles and
 no `rpm-ostree compose`, just `dnf --installroot` plus a short list of
 explicit build steps in the [Containerfile](Containerfile).
 
+## The goal: compatible output
+
+The seed changes how the image is built, not what it contains. For the same
+package set, its output must be bit-for-bit compatible with what the current
+rpm-ostree based build produces
+([fedora/bootc/base-images](https://gitlab.com/fedora/bootc/base-images),
+`bootc-base-imagectl build-rootfs`): the same paths, file types, modes,
+ownership, link targets, contents, extended attributes and timestamps, except
+for what differs between two builds of the reference itself (see below).
+Existing systems update from those images and derived images build `FROM`
+them, so any difference can break them, however reasonable it looks on its
+own. A change to the content belongs in the current images first.
+[AGENTS.md](AGENTS.md) states the same rule for agents.
+
+The seed doesn't meet this yet; [Compatibility with the current
+images](#compatibility-with-the-current-images) lists what `just compare`
+finds.
+
 ## Building and testing
 
 ```bash
@@ -123,6 +141,8 @@ installroot, which the default `container_t` confinement denies.
 
 ## What rpm-ostree did, and what the seed does instead
 
+Several of these are differences under the goal above; see the next section.
+
 | rpm-ostree compose and base-images | seed |
 | --- | --- |
 | treefile manifests | [packages.txt](packages.txt) and the Containerfile |
@@ -140,64 +160,126 @@ Compared to the current `minimal` image (243 packages, 779 MB), the seed has
 211 packages (not counting `gpg-pubkey` entries) and 678 MB. It drops the
 bootloader stack (bootupd, grub2, shim), mkfs tools, nss-altfiles, tpm2-tools,
 microcode_ctl, systemd-resolved and fedora-repos-archive. Beyond the packages
-the tracker issue lists, it has `systemd-pam`, `dbus` and `kmscon` (Fedora's
-presets use kmscon for the VT login), which upstream `minimal` also includes
-explicitly, and `dnf5`, because derived images need a package manager.
+the tracker issue lists, it has `systemd-pam`, `dbus` and `kmscon` (rawhide's
+presets use kmscon for the VT login, Fedora 44's still getty), which upstream
+`minimal` also includes explicitly, and `dnf5`, because derived images need a
+package manager.
 
-## Found along the way
+## Compatibility with the current images
 
-These came up while building the prototype and probably deserve issues of their
-own:
+Two builds of the reference itself, from the same packages, differ in
+`/usr/share/rpm/rpmdb.sqlite` and its copy in
+`/usr/lib/sysimage/rpm-ostree-base-db` (they record install times),
+`/usr/lib/bootupd/updates/EFI.json` (a timestamp) and java's `cacerts`, and
+in the mtimes of what was created at build time. These are the exceptions in
+the goal. Beyond them, `just compare` finds the following on Fedora 44 and
+rawhide:
 
-- **Kernel updates in derived images from `minimal` are broken today.**
-  `minimal` doesn't ship rpm-ostree but keeps `layout=ostree`, which nothing
-  handles. A derived `dnf upgrade kernel` leaves the new
-  `/usr/lib/modules/$kver` without an initramfs, keeps the old one in a stale
-  directory (failing the `kernel` lint), and fills `/boot`. The
-  kernel-install plugin here fixes that, and it belongs in bootc, which already
-  ships the `layout=ostree` configuration.
-- `/root` is a dangling link during container builds of `minimal`, so tools
-  that write to `$HOME` in a `RUN` fail. The seed creates the `/var` targets in
-  the image.
-- bootc's reference base image content is installed as `%doc`, so a
-  `tsflags=nodocs` build (which is the default in the `fedora` container
-  image) silently loses it. A subpackage that installs it at its real paths
-  would make it owned by rpm and visible to derived images. Also, its dracut
-  configuration is under `/usr/lib/dracut.conf.d`, which dracut does not read
-  (it reads `/usr/lib/dracut/dracut.conf.d` and `/etc/dracut.conf.d`), so
-  copying it verbatim produces an initramfs without the `ostree` and `bootc`
-  modules.
-- kernel-core's `%posttrans` runs `kernel-install add ... || exit 0`, so a
-  failing dracut in a derived build goes unnoticed and the image ships
-  without an initramfs (the `%preun` of the old kernel already removed it).
-  It also copies `symvers` into `/boot`.
-- systemd-tmpfiles doesn't follow the `/root` and `/home` links. Rewriting
-  systemd's `provision.conf` (as base-images does, and the seed copies) is
-  undone whenever a derived image updates systemd.
-- bootc can already convert `/var` content into tmpfiles.d entries
-  (`bootc_tmpfiles::var_to_tmpfiles`), but doesn't expose that on the CLI.
-  If it did, `seed-var.conf` could be generated.
-- `bcvk ephemeral run --execute` hangs until its timeout when the command
-  fails instead of returning the failure; `tests/booted.sh` works around it.
-  For `to-disk` and `libvirt run`, bcvk runs `ssh` from inside the image
-  under test, so an image without an ssh client times out waiting for a
-  sshd that is in fact running, with no hint why.
-- bootupd fails on systems installed from an image without an
-  `org.opencontainers.image.version` label: bootc writes a null version into
-  `/sysroot/.bootc-aleph.json`, which bootupd can't parse
-  (`bootloader-update.service` fails, as does `bootupctl status`); this is
-  [coreos/bootupd#1166](https://github.com/coreos/bootupd/issues/1166). The
-  seed sets the label (`VERSION` build argument, `dev` by default).
+- **Users and groups.** The reference injects fixed passwd and group entries
+  (the manifest's `passwd` and `group` files) into `/usr/lib/passwd` and
+  `/usr/lib/group` for nss-altfiles, keeps only a few groups (wheel,
+  systemd-journal, tss, kvm, adm) in `/etc/group`, and adds dracut's
+  `59-altfiles.conf` so the initramfs has them too. The seed lets sysusers
+  allocate everything into `/etc`, and leaves `passwd-`, `shadow-` and so on,
+  and `.pwd.lock`, behind. On an existing system whose `/etc/passwd` was
+  changed locally (e.g. by adding a user), the 3-way merge keeps the local
+  file, so every system user that only the new image's `/etc/passwd` has
+  would be missing; UIDs and GIDs differ too.
+- **authselect.** authselect-libs' scriptlet creates the altfiles vendor
+  profiles in `/usr/share/authselect/vendor` only when `/run/ostree-booted`
+  exists, which rpm-ostree's install provides and the seed's doesn't;
+  `/etc/authselect/nsswitch.conf` differs accordingly.
+- **rpmdb.** The reference has it in `/usr/share/rpm`, with
+  `/usr/lib/sysimage/rpm` linking there, `%_dbpath` set in
+  `macros.rpm-ostree`, and `/usr/lib/sysimage/rpm-ostree-base-db`. The seed
+  uses rpm's native location, and adds `gpg-pubkey` entries and dnf5's state
+  in `/usr/lib/sysimage/libdnf5`.
+- **`/var`.** The reference's `/var` only has `lib/rpm-state`, `tmp` and the
+  `run` link; rpm-ostree turns the rest into tmpfiles.d entries
+  (`rpm-ostree-autovar.conf`, per-package files in
+  `/usr/lib/rpm-ostree/tmpfiles.d`, `rpm-ostree-0-integration*.conf`). The
+  seed ships `/var`'s directories plus `seed-var.conf`.
+- **Modes.** System directories such as `/usr/bin`, `/usr/lib` and `/boot` are
+  0755 in the reference and 0555 (as packaged) in the seed, `/etc/machine-id`
+  is 0644 rather than 0444, and the initramfs 0644 rather than 0600.
+- **Configuration files** with the same purpose but other names or contents:
+  dracut (`20-bootc-base`, `22-bootc-generic`, `49-bootc-tpm2-tss` versus
+  bootc's `10-bootc-base` and `30-seed`; the initramfs differs too),
+  kernel-install (`install.conf` rewritten plus `00-bootc-kernel-layout.conf`,
+  versus `00-bootc-layout.conf` and the seed's plugin), dnf
+  (`20-ostree-installonlypkgs.conf` and `20-ostree-protect_running_kernel.conf`
+  versus `20-seed-kernel.conf`), presets (`85-bootc`,
+  `85-bootc-bootloader-update` versus `85-seed`, `85-seed-grub`, `90-seed`,
+  `99-seed-disable`), tmpfiles (`bootc-base-rpmstate`,
+  `konflux-buildinfo-contentsets` versus `seed-*`), `prepare-root.conf`
+  (`enabled = yes` versus bootc's `enabled = true`), and
+  `/etc/crypto-policies/config` (the packaged, commented file versus a bare
+  `DEFAULT`).
+- **Removed content.** The reference drops `systemd-firstboot.service` from
+  `sysinit.target.wants`, and grub2-tools' systemd units and
+  `/etc/grub.d/{08_fallback_counting,10_reset_boot_success,12_menu_auto_hide}`;
+  the seed keeps them (systemd-firstboot with a drop-in, grub's timer
+  disabled).
+- **SELinux.** Both keep the module store in `/etc/selinux`, but the compiled
+  policy and the store's files differ, and the reference has an empty
+  `/etc/selinux/final`.
+- **Smaller differences.** The reference has an empty
+  `/usr/lib/ostree-boot/efi` and `/usr/lib/opt`, and drops packaged paths
+  that the seed keeps: `/afs`, `/usr/lib/debug/*`, `/usr/local/sbin`. The seed
+  has a regular file at `/dev/null`, written by a scriptlet in the
+  installroot, which has no device nodes: a bug.
+
+Not in that list, because `just compare` doesn't cover them:
+
+- **Timestamps.** In the reference, files under `/usr` have mtime 0 (from
+  rpm-ostree's ostree checkout), but most of `/etc` keeps build-time mtimes;
+  the published `quay.io/fedora/fedora-bootc:44` has mtime 0 in `/etc` as
+  well, after rechunking. The seed keeps rpm's mtimes; rechunking it the same
+  way is the likely answer.
+- **Image configuration.** The published images' labels differ by
+  repository: `quay.io/fedora/fedora-bootc:44` has
+  `org.opencontainers.image.version` `44.<date>.0`, `ostree.*` and
+  `rpmostree.inputhash` labels, while
+  `quay.io/bootc-devel/fedora-bootc-rawhide-minimal` has `46`,
+  `bootc.diskimage-builder` and source and revision labels. The seed has
+  `dev`.
+- **SELinux labels and hardlinks**, and the layers of the published,
+  rechunked images.
+
+## Getting there
+
+Two ways, which can be combined:
+
+1. **Keep rpm-ostree's postprocessing for now**, as
+   [base-images-experimental](#inputs-and-prior-work) did: install with
+   `dnf --installroot` (the container- and dnf-native part), run
+   `rpm-ostree compose postprocess` in the builder, and rechunk the result
+   (`bootc-base-imagectl rechunk`). That reuses rpm-ostree's own handling of
+   e.g. the rpmdb location and `/var`, but not what happens at install time
+   (the fixed passwd and group entries, the scriptlet environment), which
+   would still need doing. Each rpm-ostree step can then be replaced by an
+   explicit one, with `just compare` showing that the replacement changes
+   nothing. The cost is what the seed avoids today: nested containers and
+   `--cap-add=all`. Not tried yet, so which differences it removes needs
+   measuring.
+2. **Close each gap in the seed itself**: the fixed passwd and group files
+   with nss-altfiles, `/run/ostree-booted` and device nodes in `/dev` during
+   the install (base-images-experimental's `dnf-installroot` sets up both),
+   rpm-ostree's rpmdb location and `/var` conversion, the same file names,
+   and timestamp normalization when rechunking.
+
+Either way, the package lists should come from the base-images manifests
+rather than a second list here, so that the package sets stay the same;
+cverna/bootc-base-imagectl-dnf5 already reads them.
 
 ## Not done yet
 
-- Rechunking (e.g. with chunkah), reproducibility (`SOURCE_DATE_EPOCH`),
-  multi-arch, and Konflux pipelines.
-- UID/GID stability across builds now that users come from sysusers.d
-  instead of a fixed passwd file.
-- The initramfs lacks the `tpm2-tss` dracut module that `minimal` adds, since
-  the seed doesn't ship tpm2-tools; derived images that unlock LUKS with a
-  TPM need to add both.
+- Compatible output, see above.
+- Rechunking (e.g. with chunkah or `bootc-base-imagectl rechunk`),
+  reproducibility (`SOURCE_DATE_EPOCH`), multi-arch, and Konflux pipelines.
+- The seed's own package set lacks `tpm2-tools`, so its initramfs lacks the
+  `tpm2-tss` dracut module that `minimal` adds; derived images that unlock
+  LUKS with a TPM need to add both.
 
 ## Inputs and prior work
 
