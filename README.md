@@ -20,6 +20,7 @@ just test         # test-rootfs + test-derive + test-boot
 just grub         # localhost/seed-grub: the seed plus bootupd, grub2 and shim
 just test-grub    # bootc install it to a disk and boot it from there
 just hummingbird  # localhost/seed-hummingbird: built from Hummingbird's packages
+just compare      # diff against rpm-ostree's minimal image, same packages
 ```
 
 - `test-rootfs` checks the image layout from inside a container
@@ -34,6 +35,19 @@ just hummingbird  # localhost/seed-hummingbird: built from Hummingbird's package
   ostree-prepare-root and composefs; only an installed system exercises those.
 
 The build also runs `bootc container lint --fatal-warnings`.
+
+`compare` builds the reference, the minimal image built the current way
+([tests/compat/Containerfile](tests/compat/Containerfile), which needs nested
+containers like base-images does), then the seed and its grub variant from
+the reference's packages at the same versions (the seed's own
+[packages.txt](packages.txt) is a subset of them). It then reports every path
+whose type, mode, ownership, link target, content, file capabilities or
+user.* extended attributes differ, with the owning packages, and how many
+mtimes differ ([tests/compat/compare.py](tests/compat/compare.py)). SELinux
+labels, hardlinks and the image configuration aren't compared. It fails if
+the package versions differ, and otherwise reports rather than fails while
+the seed's output still differs. `COMPARE_RELEASE` selects the Fedora release
+(default `rawhide`). `test-unit` tests the comparison itself.
 
 `BUILDER_IMAGE` (default `quay.io/fedora/fedora:rawhide`) selects the Fedora
 release: the repos and releasever are taken from it. `PODMAN_BUILD_ARGS`

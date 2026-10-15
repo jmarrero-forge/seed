@@ -18,6 +18,13 @@ boot_timeout := "300"
 # comment is checked, so the key itself doesn't need to be valid.
 boot_test_key_comment := "seed-boot-test"
 boot_test_key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderNotARealKeyForSeedTests " + boot_test_key_comment
+# Fedora release that `compare` builds the reference and the seed for; both
+# are built from the same repos, so that their package versions match.
+compare_release := env("COMPARE_RELEASE", "rawhide")
+# The reference's bootloader stack (base-images' bootupd.yaml and what it
+# pulls in). The seed itself has none, so like in an installable image,
+# `compare` installs these in the grub variant.
+compare_boot_packages := "^(grub2|shim|bootupd|efibootmgr|efi-filesystem|microcode_ctl|mokutil|os-prober|ostree-grub2|s390utils-core)"
 # libvirt domain used (and removed again) by test-grub; named after the image,
 # so that runs for different images don't collide.
 grub_test_vm := file_name(image) + "-grub-test"
@@ -56,8 +63,42 @@ test-grub:
         --detach --ssh-wait {{image}}-grub-test
     bcvk libvirt ssh {{grub_test_vm}} /usr/libexec/seed-tests/installed.sh
 
+# Report how the seed differs from the current rpm-ostree based build of the
+# same packages (bootc-base-imagectl's minimal manifest); see AGENTS.md
+compare:
+    #!/usr/bin/bash
+    set -euo pipefail
+    ref={{image}}-reference:{{compare_release}}
+    seed={{image}}-compare:{{compare_release}}
+    base={{image}}-compare-base:{{compare_release}}
+    # rpm-ostree needs nested containers, as in fedora/bootc/base-images.
+    # Not from the cache, which would have older packages than the seed.
+    podman build {{podman_build_args}} --no-cache --cap-add=all --device /dev/fuse \
+        --security-opt=label=type:container_runtime_t \
+        --build-arg=RELEASE={{compare_release}} -t "$ref" tests/compat
+    # Exact versions, so that the seed's build fails rather than drifts.
+    pkgs=$(podman run --rm "$ref" rpm -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' | grep -v '^gpg-pubkey-' | sort -u)
+    if ! boot=$(grep -E '{{compare_boot_packages}}' <<< "$pkgs"); then
+        echo "error: no bootloader packages found in $ref" >&2
+        exit 1
+    fi
+    rest=$(grep -vxF "$boot" <<< "$pkgs")
+    podman build --security-opt=label=disable {{podman_build_args}} \
+        --build-arg=BUILDER_IMAGE=quay.io/fedora/fedora:{{compare_release}} \
+        --build-arg="EXTRA_PACKAGES=${rest//$'\n'/ }" -t "$base" .
+    podman build {{podman_build_args}} --build-arg=SEED="$base" \
+        --build-arg="EXTRA_PACKAGES=${boot//$'\n'/ }" -t "$seed" grub
+    # Mounting images needs the rootless user namespace.
+    unshare=()
+    test "$(id -u)" -eq 0 || unshare=(podman unshare)
+    "${unshare[@]}" python3 -I -B tests/compat/compare.py "$ref" "$seed"
+
 # Run all tests against an already built image
-test: test-rootfs test-derive test-boot
+test: test-unit test-rootfs test-derive test-boot
+
+# Unit tests for the tools in tests/
+test-unit:
+    python3 -I -B -m unittest discover -s tests/compat
 
 # Check the root filesystem from inside a container
 test-rootfs:

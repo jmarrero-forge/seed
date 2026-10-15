@@ -1,0 +1,9 @@
+# The reference for `just compare`: the current rpm-ostree based build of the
+# minimal image, the way the fedora-bootc documentation builds custom base
+# images. Needs nested containers (see the Justfile).
+ARG RELEASE=rawhide
+FROM quay.io/fedora/fedora-bootc:${RELEASE} AS builder
+RUN /usr/libexec/bootc-base-imagectl build-rootfs --manifest=minimal / /target-rootfs
+FROM scratch
+COPY --from=builder /target-rootfs/ /
+LABEL containers.bootc=1
