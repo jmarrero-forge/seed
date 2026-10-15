@@ -9,6 +9,8 @@ builder_image := env("BUILDER_IMAGE", "quay.io/fedora/fedora:rawhide")
 # steps that update ca-certificates would fail):
 #   PODMAN_BUILD_ARGS="--security-opt=label=disable -v /etc/pki/ca-trust/extracted:/etc/pki/ca-trust/extracted:ro"
 podman_build_args := env("PODMAN_BUILD_ARGS", "")
+# Hummingbird's own builder image; it ships the Hummingbird repo and keys.
+hummingbird_builder_image := env("HUMMINGBIRD_BUILDER_IMAGE", "quay.io/hummingbird-ci/hummingbird-builder:latest")
 # Generous upper bound for booting and running tests/booted.sh; a healthy
 # boot takes seconds, but bcvk hangs instead of failing when the command does.
 boot_timeout := "300"
@@ -24,6 +26,18 @@ grub_test_vm := file_name(image) + "-grub-test"
 build:
     podman build --security-opt=label=disable {{podman_build_args}} \
         --build-arg=BUILDER_IMAGE={{builder_image}} -t {{image}} .
+
+# Build the seed from Hummingbird's packages, falling back to Fedora 44 for
+# the ones Hummingbird doesn't carry (e.g. the kernel), like Hummingbird's own
+# images. Hummingbird's fedora-repos rebuild pins release 44, and its own repo
+# has priority=10, so its packages win wherever both have one.
+# Test with e.g. `IMAGE=localhost/seed-hummingbird just test`.
+hummingbird:
+    podman build --security-opt=label=disable {{podman_build_args}} \
+        --build-arg=BUILDER_IMAGE={{hummingbird_builder_image}} \
+        --build-arg=BUILDER_PACKAGES=fedora-repos \
+        --build-arg="EXTRA_PACKAGES=hummingbird-release fedora-repos" \
+        -t {{image}}-hummingbird .
 
 # Build an installable variant of the seed, with bootupd, grub2 and shim
 grub:

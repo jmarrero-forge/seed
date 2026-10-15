@@ -19,6 +19,7 @@ just build        # podman build --security-opt=label=disable -t localhost/seed 
 just test         # test-rootfs + test-derive + test-boot
 just grub         # localhost/seed-grub: the seed plus bootupd, grub2 and shim
 just test-grub    # bootc install it to a disk and boot it from there
+just hummingbird  # localhost/seed-hummingbird: built from Hummingbird's packages
 ```
 
 - `test-rootfs` checks the image layout from inside a container
@@ -37,6 +38,8 @@ The build also runs `bootc container lint --fatal-warnings`.
 `BUILDER_IMAGE` (default `quay.io/fedora/fedora:rawhide`) selects the Fedora
 release: the repos and releasever are taken from it. `PODMAN_BUILD_ARGS`
 passes extra arguments to all the podman builds, see the [Justfile](Justfile).
+Set `IMAGE` to run the recipes against another image, e.g.
+`IMAGE=localhost/seed-hummingbird just test`.
 
 ### The grub variant
 
@@ -55,6 +58,36 @@ install over SSH from inside the image under test, so the test image
 openssh-server, openssh-clients and NetworkManager, none of which the seed
 has. Like Fedora's images, the seed doesn't set a default root filesystem, so
 the test passes `--filesystem xfs`.
+
+### Hummingbird
+
+`just hummingbird` builds the seed from
+[Project Hummingbird](https://hummingbird-project.io)'s packages (Fedora
+packages rebuilt as `*.hum1`), using Hummingbird's own builder image,
+`quay.io/hummingbird-ci/hummingbird-builder`, which provides its repo and
+signing key. Hummingbird doesn't carry everything the seed needs, so like
+Hummingbird's own images it falls back to Fedora 44, through Hummingbird's
+rebuild of `fedora-repos`, which pins release 44. Hummingbird's repo has
+`priority=10`, so its packages win wherever both have one. Of the seed's 208
+packages, 199 come from Hummingbird; the kernel, kmscon and kmscon's
+dependencies come from Fedora, as do the bootloader packages, xfsprogs (with
+its dependency inih) and os-prober in the grub variant. It is `Hummingbird OS`
+(`hummingbird-release`), and derived builds get the same repos
+(`hummingbird-repos` and `fedora-repos`). All tests, including `test-grub`,
+pass with `IMAGE=localhost/seed-hummingbird`.
+
+The main difference is the preset policy. Fedora 44 ships its presets in
+`fedora-release-common`, which conflicts with `hummingbird-release`.
+Hummingbird only has systemd's own presets, which have no catch-all, so every
+other installed unit would be enabled (automatic bootc updates,
+`podman-auto-update`, `systemd-homed-firstboot`, which then hangs the first
+boot on a prompt, ...). The seed therefore carries fallbacks for what it
+relies on in its own presets: a catch-all `disable *`, the system and session
+bus, ostree-remount and authselect-apply-changes. What remains different is
+distribution policy: Hummingbird gets systemd's own choices (e.g. getty rather
+than kmscon for the VT login, timesyncd, systemd-boot-update), and not
+Fedora's (e.g. systemd-oomd, fstrim.timer, rpmdb-rebuild, the FIPS crypto
+policy overlay, selinux-autorelabel-mark).
 
 ## How it's built
 
@@ -159,3 +192,9 @@ also replaces rpm-ostree with dnf5, but keeps the base-images treefile
 manifests and reimplements their semantics in Python. That is the path for
 moving the existing manifests over unchanged. The seed instead drops the
 treefile format and expresses the image as a Containerfile.
+
+Hummingbird's own bootable images
+([bootc-os, now os-minimal](https://gitlab.com/redhat/hummingbird/containers/-/tree/main/images/os-minimal))
+are also built with `dnf --installroot` and no rpm-ostree, from lockfiles.
+They keep the SELinux module store in `/usr/lib/selinux` rather than `/etc`,
+to avoid the 3-way merge of the policy files on updates.
