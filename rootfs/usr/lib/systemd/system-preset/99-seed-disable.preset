@@ -1,0 +1,5 @@
+# systemd enables units that no preset matches. Make disabling the default, as
+# Fedora's own 99-default-disable.preset does (which sorts first, so on Fedora
+# this is a no-op); without it, e.g. on Hummingbird, every installed unit would
+# be enabled.
+disable *

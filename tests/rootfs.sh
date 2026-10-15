@@ -34,7 +34,17 @@ done
 
 test -e /etc/machine-id || fail "/etc/machine-id is missing"
 test ! -s /etc/machine-id || fail "/etc/machine-id is not empty"
-test "$(systemctl is-enabled autovt@tty1.service)" = enabled || fail "no login on tty1"
+# The seed's own presets apply even without the distribution's (e.g. on
+# Hummingbird): what it relies on is enabled, everything else disabled.
+for want in enabled:dbus.socket enabled:dbus-broker.service \
+    enabled:ostree-remount.service enabled:authselect-apply-changes.service \
+    enabled:autovt@tty1.service disabled:dnf-makecache.timer \
+    disabled:bootc-fetch-apply-updates.timer disabled:podman-auto-update.timer \
+    disabled:systemd-homed-firstboot.service; do
+    state="${want%%:*}" unit="${want#*:}"
+    test "$(systemctl is-enabled "$unit")" = "$state" || fail "$unit is not $state"
+done
+test "$(systemctl --global is-enabled dbus.socket)" = enabled || fail "no session bus"
 
 # The rpmdb must be readable on a read-only /usr: rollback journal (sqlite
 # header bytes 18-19 are 1, not 2 for WAL) and no sidecar files.

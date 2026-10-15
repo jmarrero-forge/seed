@@ -1,0 +1,11 @@
+# Fallbacks for what the seed itself relies on. Fedora's presets enable all of
+# this too, and its 90-default.preset sorts first, so its policy wins; but not
+# every package set comes with Fedora's presets (e.g. Hummingbird). This sorts
+# before systemd's own 90-systemd.preset.
+# The system bus, for logind and PAM sessions:
+enable dbus.socket
+enable dbus-broker.service
+# ostree's remounting at boot:
+enable ostree-remount.service
+# The build drops authselect's state from /var; this re-applies it at boot:
+enable authselect-apply-changes.service
