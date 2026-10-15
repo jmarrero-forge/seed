@@ -199,16 +199,70 @@ own:
   the seed doesn't ship tpm2-tools; derived images that unlock LUKS with a
   TPM need to add both.
 
-## Related work
+## Inputs and prior work
 
-[cverna/bootc-base-imagectl-dnf5](https://github.com/cverna/bootc-base-imagectl-dnf5)
-also replaces rpm-ostree with dnf5, but keeps the base-images treefile
-manifests and reimplements their semantics in Python. That is the path for
-moving the existing manifests over unchanged. The seed instead drops the
-treefile format and expresses the image as a Containerfile.
+Inputs:
 
-Hummingbird's own bootable images
-([bootc-os, now os-minimal](https://gitlab.com/redhat/hummingbird/containers/-/tree/main/images/os-minimal))
-are also built with `dnf --installroot` and no rpm-ostree, from lockfiles.
-They keep the SELinux module store in `/usr/lib/selinux` rather than `/etc`,
-to avoid the 3-way merge of the policy files on updates.
+- [atomic/tracker#144](https://forge.fedoraproject.org/atomic/tracker/issues/144),
+  the epic for the seed: the minimal package set, a base that doesn't have
+  to boot, testing policy, Konflux pipelines and documentation.
+- [atomic/tracker#137](https://forge.fedoraproject.org/atomic/tracker/issues/137),
+  CoreOS and Atomic unification, which the seed is part of; see also
+  [coreos/fedora-coreos-tracker#2214](https://github.com/coreos/fedora-coreos-tracker/issues/2214),
+  [base-images#84](https://gitlab.com/fedora/bootc/base-images/-/work_items/84)
+  and the [unification call notes](https://nimbinatus.fedorapeople.org/#unification).
+- [fedora/bootc/base-images](https://gitlab.com/fedora/bootc/base-images),
+  the current rpm-ostree based build and the compatibility target. Its
+  `bootc-base-imagectl` and manifests (also in the fedora-bootc images, under
+  `/usr/share/doc/bootc-base-imagectl/manifests`) build the reference for
+  `just compare`. See also the
+  [minimal image philosophy](https://docs.fedoraproject.org/en-US/bootc/base-images/#_minimal_image_philosophy)
+  and [building from scratch](https://docs.fedoraproject.org/en-US/bootc/building-from-scratch/).
+- bootc's reference base image content (`/usr/share/doc/bootc/baseimage`)
+  and its [image requirements](https://bootc.dev/bootc/bootc-images.html#standard-image-content).
+- [atomic/tracker#82](https://forge.fedoraproject.org/atomic/tracker/issues/82)
+  (`rpm-ostree-base-db`) and
+  [#87](https://forge.fedoraproject.org/atomic/tracker/issues/87)
+  (nss-altfiles and sysusers).
+- [bcvk](https://github.com/bootc-dev/bcvk), for the boot and install tests.
+
+Prior work:
+
+- [base-images-experimental](https://gitlab.com/fedora/bootc/base-images-experimental)
+  (Colin Walters, 2024; archived in January 2025 in favour of
+  [fedora/bootc/tracker#32](https://gitlab.com/fedora/bootc/tracker/-/work_items/32),
+  "Supportable customizable base images"). Its build rationale asks for the
+  same as the seed: container-native, dnf-native, no new file formats,
+  hackable. It installs with `dnf --installroot`, using the builder's repos,
+  through a `dnf-installroot` wrapper that gives scriptlets `/proc`, a tmpfs
+  `/dev` with device nodes bound from the host, tmpfs `/run` and `/tmp`, and
+  `/run/ostree-booted`. Package lists are `.spec` files whose `BuildRequires`
+  go to `dnf builddep`, for comments and architecture and distribution
+  conditionals. "imagedirs" add `rootfs/` content, `.post` scripts (run with
+  bwrap), an `inherit` link for variants (full inherits minimal), and fixed
+  `passwd` and `group` files for stable UIDs and GIDs. It then still runs
+  `rpm-ostree compose postprocess`, with its own settings (e.g. `rpmdb: host`,
+  `boot-location: modules`), and commits and encapsulates the result into a
+  chunked image, picked up with `FROM oci-archive:`, so its output follows
+  rpm-ostree's conventions. Compared to the seed, that addresses the
+  scriptlets' environment in the installroot, stable IDs, chunked layers,
+  conditionals in package lists and, through rpm-ostree, much of the current
+  images' layout; at the price of nested containers and `--cap-add=all`. Its
+  move of the EFI binaries into `/usr/lib/ostree-boot` is obsolete, since
+  bootupd reads `/usr/lib/efi`.
+- [cverna/bootc-base-imagectl-dnf5](https://github.com/cverna/bootc-base-imagectl-dnf5)
+  also replaces rpm-ostree with dnf5, but keeps the base-images treefile
+  manifests and reimplements their semantics in Python, which keeps the
+  package sets those of the current images.
+- Hummingbird's own bootable images
+  ([bootc-os, now os-minimal](https://gitlab.com/redhat/hummingbird/containers/-/tree/main/images/os-minimal))
+  are also built with `dnf --installroot` and no rpm-ostree, from lockfiles.
+  They keep the SELinux module store in `/usr/lib/selinux` rather than
+  `/etc`, to avoid the 3-way merge of the policy files on updates. See also
+  the [Hummingbird SIG](https://fedoraproject.org/wiki/Hummingbird) and
+  [its container definitions](https://gitlab.com/redhat/hummingbird/containers).
+- rpm-ostree's postprocessing is, in effect, the specification of the
+  current output, e.g. the SELinux store equivalency
+  ([coreos/rpm-ostree#5616](https://github.com/coreos/rpm-ostree/issues/5616))
+  and the rpmdb normalization
+  ([rpm#2219](https://github.com/rpm-software-management/rpm/issues/2219)).
