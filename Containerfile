@@ -135,6 +135,11 @@ EORUN
 
 FROM scratch
 COPY --from=rootfs / /
+# bootc records this at install time, and bootupd can't handle systems
+# installed from an image without it: it fails to parse the null version in
+# /sysroot/.bootc-aleph.json (https://github.com/coreos/bootupd/issues/1166).
+ARG VERSION=dev
+LABEL org.opencontainers.image.version=${VERSION}
 LABEL containers.bootc=1
 ENV container=oci
 STOPSIGNAL SIGRTMIN+3

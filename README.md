@@ -111,6 +111,12 @@ own:
   If it did, `seed-var.conf` could be generated.
 - `bcvk ephemeral run --execute` hangs until its timeout when the command
   fails instead of returning the failure; `tests/booted.sh` works around it.
+- bootupd fails on systems installed from an image without an
+  `org.opencontainers.image.version` label: bootc writes a null version into
+  `/sysroot/.bootc-aleph.json`, which bootupd can't parse
+  (`bootloader-update.service` fails, as does `bootupctl status`); this is
+  [coreos/bootupd#1166](https://github.com/coreos/bootupd/issues/1166). The
+  seed sets the label (`VERSION` build argument, `dev` by default).
 
 ## Not done yet
 
