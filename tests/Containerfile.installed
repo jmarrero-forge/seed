@@ -1,0 +1,14 @@
+# The grub variant plus what `just test-grub` needs on the installed system:
+# sshd, networking (bcvk reaches sshd through QEMU's user networking, and the
+# seed doesn't configure any), an ssh client (bcvk runs `ssh` from the image
+# under test while installing it), and the checks to run.
+ARG BASE=localhost/seed-grub
+FROM ${BASE}
+RUN <<EORUN
+set -xeuo pipefail
+dnf -y --setopt=install_weak_deps=False install openssh-server openssh-clients NetworkManager
+dnf clean all
+# Don't depend on the distribution's presets for this.
+systemctl enable sshd.service NetworkManager.service
+EORUN
+COPY --chmod=0755 installed.sh /usr/libexec/seed-tests/installed.sh

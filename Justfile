@@ -10,11 +10,30 @@ boot_timeout := "300"
 # comment is checked, so the key itself doesn't need to be valid.
 boot_test_key_comment := "seed-boot-test"
 boot_test_key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPlaceholderNotARealKeyForSeedTests " + boot_test_key_comment
+# libvirt domain used (and removed again) by test-grub; named after the image,
+# so that runs for different images don't collide.
+grub_test_vm := file_name(image) + "-grub-test"
 
 # Build the seed image
 build:
     podman build --security-opt=label=disable \
         --build-arg=BUILDER_IMAGE={{builder_image}} -t {{image}} .
+
+# Build an installable variant of the seed, with bootupd, grub2 and shim
+grub:
+    podman build --build-arg=SEED={{image}} -t {{image}}-grub grub
+
+# Install the grub variant to a disk and boot it (UEFI with Secure Boot)
+test-grub:
+    #!/usr/bin/bash
+    set -euo pipefail
+    podman build -f tests/Containerfile.installed --build-arg=BASE={{image}}-grub \
+        -t {{image}}-grub-test tests
+    trap 'bcvk libvirt rm --force {{grub_test_vm}}' EXIT
+    # Like Fedora's images, the seed has no default root filesystem type.
+    bcvk libvirt run --name {{grub_test_vm}} --filesystem xfs --firmware uefi-secure \
+        --detach --ssh-wait {{image}}-grub-test
+    bcvk libvirt ssh {{grub_test_vm}} /usr/libexec/seed-tests/installed.sh
 
 # Run all tests against an already built image
 test: test-rootfs test-derive test-boot

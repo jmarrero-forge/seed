@@ -17,6 +17,8 @@ explicit build steps in the [Containerfile](Containerfile).
 ```bash
 just build        # podman build --security-opt=label=disable -t localhost/seed .
 just test         # test-rootfs + test-derive + test-boot
+just grub         # localhost/seed-grub: the seed plus bootupd, grub2 and shim
+just test-grub    # bootc install it to a disk and boot it from there
 ```
 
 - `test-rootfs` checks the image layout from inside a container
@@ -34,6 +36,24 @@ The build also runs `bootc container lint --fatal-warnings`.
 
 `BUILDER_IMAGE` (default `quay.io/fedora/fedora:rawhide`) selects the Fedora
 release: the repos and releasever are taken from it.
+
+### The grub variant
+
+[grub/Containerfile](grub/Containerfile) is an ordinary derived image that
+makes the seed installable: bootupd with grub2 and shim, plus the mkfs tools
+`bootc install to-disk` needs. shim and grub2 already ship their EFI binaries
+in `/usr/lib/efi`, which bootupd reads directly, so unlike with rpm-ostree
+nothing needs to move content out of `/boot`.
+
+`test-grub` installs it with `bcvk libvirt run` (UEFI with Secure Boot) and
+checks the booted system over SSH ([tests/installed.sh](tests/installed.sh)):
+composefs root, read-only `/sysroot`, SELinux enforcing, Secure Boot, a
+successful `bootloader-update.service`, and no failed units. bcvk drives the
+install over SSH from inside the image under test, so the test image
+([tests/Containerfile.installed](tests/Containerfile.installed)) adds
+openssh-server, openssh-clients and NetworkManager, none of which the seed
+has. Like Fedora's images, the seed doesn't set a default root filesystem, so
+the test passes `--filesystem xfs`.
 
 ## How it's built
 
@@ -111,6 +131,9 @@ own:
   If it did, `seed-var.conf` could be generated.
 - `bcvk ephemeral run --execute` hangs until its timeout when the command
   fails instead of returning the failure; `tests/booted.sh` works around it.
+  For `to-disk` and `libvirt run`, bcvk runs `ssh` from inside the image
+  under test, so an image without an ssh client times out waiting for a
+  sshd that is in fact running, with no hint why.
 - bootupd fails on systems installed from an image without an
   `org.opencontainers.image.version` label: bootc writes a null version into
   `/sysroot/.bootc-aleph.json`, which bootupd can't parse
@@ -120,9 +143,6 @@ own:
 
 ## Not done yet
 
-- A derived, installable image with a bootloader. grub2 already ships
-  `/usr/lib/efi` content for bootupd, but shim still only installs to
-  `/boot/efi`.
 - Rechunking (e.g. with chunkah), reproducibility (`SOURCE_DATE_EPOCH`),
   multi-arch, and Konflux pipelines.
 - UID/GID stability across builds now that users come from sysusers.d

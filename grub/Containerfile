@@ -1,0 +1,44 @@
+# An installable variant of the seed: adds the bootloader (bootupd with grub2
+# and shim) and the tools `bootc install to-disk` uses to create filesystems.
+# Build with `just grub`.
+ARG SEED=localhost/seed
+FROM ${SEED}
+RUN --mount=type=cache,rw,id=seed-grub-dnf-cache,target=/var/cache/libdnf5 <<EORUN
+set -xeuo pipefail
+case "$(uname -m)" in
+    x86_64) bootloader=(grub2-efi-x64 shim-x64 grub2-pc) ;;
+    aarch64) bootloader=(grub2-efi-aa64 shim-aa64) ;;
+    *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+# Without weak dependencies, like the seed itself.
+dnf -y --setopt=install_weak_deps=False install \
+    bootupd efibootmgr "${bootloader[@]}" xfsprogs e2fsprogs dosfstools
+
+# Update the bootloader from the image on boot, like the base-images do
+# (https://fedoraproject.org/wiki/Changes/AutomaticBootloaderUpdatesBootc).
+echo 'enable bootloader-update.service' > /usr/lib/systemd/system-preset/85-seed-grub.preset
+systemctl preset bootloader-update.service
+# This marks boots as successful for grub's menu auto-hide, which bootupd's
+# static grub configuration doesn't use; the base-images drop it as well.
+echo 'disable grub-boot-success.timer' > /usr/lib/systemd/user-preset/85-seed-grub.preset
+systemctl --global preset grub-boot-success.timer
+
+# shim and grub2 install into both /boot/efi and /usr/lib/efi, and their
+# scriptlets add more to /boot, which differs between releases (e.g. Fedora
+# 44's grub2 also creates /boot/loader). bootupd sets up the ESP (and grub's
+# fonts and environment) from /usr at install time, and /boot is not part of
+# a bootc image.
+# Make sure bootupd has both shim and grub2 to install before dropping the
+# copies in /boot; otherwise this only shows at install time.
+test -d /usr/lib/efi/shim
+test -d /usr/lib/efi/grub2
+find /boot -mindepth 1 -print -delete
+bootupctl backend generate-update-metadata
+
+# dnf's own state from this build; /var is only applied at initial install,
+# so what packages need there is declared via tmpfiles.d instead.
+rm -r /run/dnf /var/lib/dnf /var/log/dnf5.log /var/cache/ldconfig/aux-cache
+echo 'd /var/lib/os-prober 0755 root root - -' > /usr/lib/tmpfiles.d/seed-grub-var.conf
+EORUN
+# Separately, so the dnf cache mount isn't seen as image content.
+RUN bootc container lint --fatal-warnings --no-truncate
